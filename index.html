@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>家計簿 Googleアカウント連携</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --sub:#59636e; --accent:#06c755; --border:#d8dee4; --warn:#fff8c5; }
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --sub:#59636e; --accent:#06c755; --border:#d8dee4; --warn:#fff8c5; --err:#cf222e; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#0d1117; --card:#161b22; --text:#e6edf3; --sub:#9198a1; --border:#30363d; --warn:#3b2e00; }
+    :root { --bg:#0d1117; --card:#161b22; --text:#e6edf3; --sub:#9198a1; --border:#30363d; --warn:#3b2e00; --err:#ff7b72; }
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body { margin:0; background:var(--bg); color:var(--text);
          font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
          padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); }
@@ -17,45 +18,55 @@
          border-radius:16px; padding:28px 24px; }
   h1 { font-size:20px; margin:0 0 12px; }
   p { line-height:1.7; color:var(--sub); margin:0 0 16px; }
+  ul { color:var(--sub); line-height:1.8; padding-left:20px; margin:0 0 16px; }
   .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; background:var(--accent);
          color:#fff; font-size:16px; font-weight:bold; cursor:pointer; text-align:center; text-decoration:none; }
-  .note { background:var(--warn); border-radius:10px; padding:12px 14px; font-size:14px; line-height:1.7; margin:16px 0; }
-  .code { width:100%; font-family:ui-monospace, Menlo, monospace; font-size:13px; padding:12px; border:1px solid var(--border);
-          border-radius:8px; background:var(--bg); color:var(--text); word-break:break-all; min-height:90px; resize:none; }
+  .note { background:var(--warn); border-radius:10px; padding:12px 14px; font-size:14px; line-height:1.7; margin:16px 0 0; }
   .hidden { display:none; }
-  .error { color:#cf222e; }
+  .error { color:var(--err); }
+  .spinner { width:36px; height:36px; border:4px solid var(--border); border-top-color:var(--accent);
+             border-radius:50%; margin:8px auto 16px; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <main>
-  <!-- ① 最初の画面：連携ボタン -->
-  <section id="start">
+  <section id="start" class="hidden">
     <h1>Googleアカウントと連携する</h1>
-    <p>家計簿システムが、カード会社からの利用通知メールを読み取り、あなたのGoogleドライブに家計簿のスプレッドシートを作れるようにします。</p>
-    <p>このシステムが触れるのは、カード会社からのメールと、このシステムが作ったスプレッドシートだけです。</p>
+    <p>家計簿システムが、次のことをできるようにします。</p>
+    <ul>
+      <li>カード会社からの利用通知メールを読み取る</li>
+      <li>あなたのGoogleドライブに家計簿のスプレッドシートを作り、記録する</li>
+    </ul>
+    <p>触れるのは、カード会社からのメールと、このシステムが作ったスプレッドシートだけです。</p>
     <button class="btn" id="connect">Googleで連携する</button>
-    <div class="note">途中で「Googleはこのアプリを確認していません」と表示されたら、「詳細」→「（アプリ名）に移動（安全ではないページ）」を押して進んでください。</div>
+    <div class="note">途中で「Googleはこのアプリを確認していません」と表示されたら、「詳細」→「（アプリ名）に移動」を押して進んでください。また、許可の画面では<strong>すべての項目にチェック</strong>を入れてください。</div>
   </section>
 
-  <!-- ② 許可のあとに戻ってきた画面（検証用：受け取ったコードを表示する） -->
+  <section id="working" class="hidden">
+    <div class="spinner"></div>
+    <h1 style="text-align:center">連携しています…</h1>
+    <p style="text-align:center">このまま少しお待ちください。</p>
+  </section>
+
   <section id="done" class="hidden">
-    <h1>✅ 連携の許可を受け取りました</h1>
-    <p>【検証用の画面】下のコードを、10分以内にパソコンのターミナルに貼り付けてください。</p>
-    <textarea class="code" id="code" readonly></textarea>
-    <button class="btn" id="copy" style="margin-top:12px">コードをコピー</button>
+    <h1>✅ <span id="done-title">連携が完了しました</span></h1>
+    <p id="done-message"></p>
+    <a class="btn" id="sheet-link" href="#" target="_blank" rel="noopener">家計簿のスプレッドシートを開く</a>
+    <p style="margin-top:16px">このページは閉じて、LINEに戻って大丈夫です。</p>
   </section>
 
-  <!-- ③ エラーのとき -->
   <section id="failed" class="hidden">
     <h1 class="error">連携できませんでした</h1>
     <p id="failed-reason"></p>
-    <a class="btn" href="./">最初からやり直す</a>
   </section>
 </main>
 
 <script>
-  // ▼ Google Cloud で作成した「ウェブアプリケーション」のクライアントID（公開して問題ない値）
+  // ▼ Google Cloud「kakeibo-web」クライアントのID（公開して問題ない値）
   const CLIENT_ID = "23115355244-5dliprhbhro2ui24221gud219tf2pscs.apps.googleusercontent.com";
+  // ▼ 中継役（GAS）のウェブアプリのURL
+  const RELAY_URL = "https://script.google.com/macros/s/AKfycbxesrpRb_8QVSNq0trmhXs7zNS-qAgOXzoK9RVQWXwAQMLaKDOuvXUcCBTlTzGBNftD/exec";
   // ▼ このページ自身のURL（Google Cloud の「承認済みのリダイレクトURI」と完全に一致させる）
   const REDIRECT_URI = location.origin + location.pathname;
   // ▼ 必要最小限の権限：Gmailの読み取りとラベル付け／このシステムが作ったファイルだけの読み書き
@@ -65,50 +76,50 @@
   ].join(" ");
 
   const show = (id) => {
-    for (const s of ["start", "done", "failed"]) document.getElementById(s).classList.toggle("hidden", s !== id);
+    for (const s of ["start", "working", "done", "failed"]) document.getElementById(s).classList.toggle("hidden", s !== id);
   };
-
-  document.getElementById("connect").addEventListener("click", () => {
-    // なりすまし防止のための使い捨ての値（戻ってきたときに一致するか確認する）
-    const state = crypto.getRandomValues(new Uint32Array(4)).join("-");
-    try { sessionStorage.setItem("oauth_state", state); } catch (e) {}
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
-      response_type: "code",
-      scope: SCOPES,
-      access_type: "offline",   // 30分おきの自動実行に必要な「長く使える鍵」をもらう
-      prompt: "consent",
-      include_granted_scopes: "true",
-      state: state,
-    });
-    location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
-  });
-
-  document.getElementById("copy").addEventListener("click", async () => {
-    const text = document.getElementById("code").value;
-    try { await navigator.clipboard.writeText(text); document.getElementById("copy").textContent = "コピーしました"; }
-    catch (e) { document.getElementById("code").select(); }
-  });
-
-  // 許可のあと、Googleから ?code=... 付きでこのページに戻ってきたときの処理
+  const fail = (reason) => { document.getElementById("failed-reason").textContent = reason; show("failed"); };
   const q = new URLSearchParams(location.search);
-  if (q.get("error")) {
-    document.getElementById("failed-reason").textContent =
-      q.get("error") === "access_denied" ? "許可がキャンセルされました。" : "エラー：" + q.get("error");
-    show("failed");
-  } else if (q.get("code")) {
-    let saved = null;
-    try { saved = sessionStorage.getItem("oauth_state"); } catch (e) {}
-    if (saved && q.get("state") !== saved) {
-      document.getElementById("failed-reason").textContent = "安全確認に失敗しました。最初からやり直してください。";
-      show("failed");
+
+  if (q.get("code") || q.get("error")) {
+    // ── Googleの許可画面から戻ってきたとき ──
+    const code = q.get("code"), state = q.get("state");
+    history.replaceState(null, "", location.pathname); // アドレスバーからコードを消す
+    if (q.get("error")) {
+      fail(q.get("error") === "access_denied"
+        ? "許可がキャンセルされました。LINEで何かメッセージを送ると、新しいリンクが届きます。"
+        : "エラーが発生しました（" + q.get("error") + "）。LINEで何かメッセージを送ると、新しいリンクが届きます。");
     } else {
-      document.getElementById("code").value = q.get("code");
-      show("done");
-      // アドレスバーからコードを消しておく（画面共有などで見られないように）
-      history.replaceState(null, "", location.pathname);
+      show("working");
+      // Content-Type を付けない（text/plain になる）ことで、GASへそのまま送れる
+      fetch(RELAY_URL, { method: "POST", body: JSON.stringify({ action: "connect", code: code, state: state }) })
+        .then((r) => r.json())
+        .then((res) => {
+          if (!res.ok) return fail(res.message || "連携に失敗しました。LINEで何かメッセージを送ると、新しいリンクが届きます。");
+          document.getElementById("done-message").textContent = res.message;
+          document.getElementById("sheet-link").href = res.sheet_url;
+          show("done");
+        })
+        .catch(() => fail("通信に失敗しました。電波の良いところで、LINEで何かメッセージを送り、新しいリンクからやり直してください。"));
     }
+  } else if (q.get("s")) {
+    // ── LINEのリンクから開いたとき ──
+    const state = q.get("s");
+    show("start");
+    document.getElementById("connect").addEventListener("click", () => {
+      const params = new URLSearchParams({
+        client_id: CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: "code",
+        scope: SCOPES,
+        access_type: "offline",   // 30分おきの自動実行に必要な「長く使える鍵」をもらう
+        prompt: "consent",
+        state: state,             // LINEで届いた使い捨ての控え（誰の連携かを中継役が判別する）
+      });
+      location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
+    });
+  } else {
+    fail("このページは、LINEの「日次決算Bot」から届いたリンクから開いてください。");
   }
 </script>
 </body>
