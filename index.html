@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家計簿 Googleアカウント連携</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1f2328; --sub:#59636e; --accent:#06c755; --border:#d8dee4; --warn:#fff8c5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --card:#161b22; --text:#e6edf3; --sub:#9198a1; --border:#30363d; --warn:#3b2e00; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+         padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); }
+  main { max-width:480px; margin:40px auto; background:var(--card); border:1px solid var(--border);
+         border-radius:16px; padding:28px 24px; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  p { line-height:1.7; color:var(--sub); margin:0 0 16px; }
+  .btn { display:block; width:100%; padding:14px; border:none; border-radius:10px; background:var(--accent);
+         color:#fff; font-size:16px; font-weight:bold; cursor:pointer; text-align:center; text-decoration:none; }
+  .note { background:var(--warn); border-radius:10px; padding:12px 14px; font-size:14px; line-height:1.7; margin:16px 0; }
+  .code { width:100%; font-family:ui-monospace, Menlo, monospace; font-size:13px; padding:12px; border:1px solid var(--border);
+          border-radius:8px; background:var(--bg); color:var(--text); word-break:break-all; min-height:90px; resize:none; }
+  .hidden { display:none; }
+  .error { color:#cf222e; }
+</style>
+</head>
+<body>
+<main>
+  <!-- ① 最初の画面：連携ボタン -->
+  <section id="start">
+    <h1>Googleアカウントと連携する</h1>
+    <p>家計簿システムが、カード会社からの利用通知メールを読み取り、あなたのGoogleドライブに家計簿のスプレッドシートを作れるようにします。</p>
+    <p>このシステムが触れるのは、カード会社からのメールと、このシステムが作ったスプレッドシートだけです。</p>
+    <button class="btn" id="connect">Googleで連携する</button>
+    <div class="note">途中で「Googleはこのアプリを確認していません」と表示されたら、「詳細」→「（アプリ名）に移動（安全ではないページ）」を押して進んでください。</div>
+  </section>
+
+  <!-- ② 許可のあとに戻ってきた画面（検証用：受け取ったコードを表示する） -->
+  <section id="done" class="hidden">
+    <h1>✅ 連携の許可を受け取りました</h1>
+    <p>【検証用の画面】下のコードを、10分以内にパソコンのターミナルに貼り付けてください。</p>
+    <textarea class="code" id="code" readonly></textarea>
+    <button class="btn" id="copy" style="margin-top:12px">コードをコピー</button>
+  </section>
+
+  <!-- ③ エラーのとき -->
+  <section id="failed" class="hidden">
+    <h1 class="error">連携できませんでした</h1>
+    <p id="failed-reason"></p>
+    <a class="btn" href="./">最初からやり直す</a>
+  </section>
+</main>
+
+<script>
+  // ▼ Google Cloud で作成した「ウェブアプリケーション」のクライアントID（公開して問題ない値）
+  const CLIENT_ID = "23115355244-5dliprhbhro2ui24221gud219tf2pscs.apps.googleusercontent.com";
+  // ▼ このページ自身のURL（Google Cloud の「承認済みのリダイレクトURI」と完全に一致させる）
+  const REDIRECT_URI = location.origin + location.pathname;
+  // ▼ 必要最小限の権限：Gmailの読み取りとラベル付け／このシステムが作ったファイルだけの読み書き
+  const SCOPES = [
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/drive.file",
+  ].join(" ");
+
+  const show = (id) => {
+    for (const s of ["start", "done", "failed"]) document.getElementById(s).classList.toggle("hidden", s !== id);
+  };
+
+  document.getElementById("connect").addEventListener("click", () => {
+    // なりすまし防止のための使い捨ての値（戻ってきたときに一致するか確認する）
+    const state = crypto.getRandomValues(new Uint32Array(4)).join("-");
+    try { sessionStorage.setItem("oauth_state", state); } catch (e) {}
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      response_type: "code",
+      scope: SCOPES,
+      access_type: "offline",   // 30分おきの自動実行に必要な「長く使える鍵」をもらう
+      prompt: "consent",
+      include_granted_scopes: "true",
+      state: state,
+    });
+    location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + params.toString();
+  });
+
+  document.getElementById("copy").addEventListener("click", async () => {
+    const text = document.getElementById("code").value;
+    try { await navigator.clipboard.writeText(text); document.getElementById("copy").textContent = "コピーしました"; }
+    catch (e) { document.getElementById("code").select(); }
+  });
+
+  // 許可のあと、Googleから ?code=... 付きでこのページに戻ってきたときの処理
+  const q = new URLSearchParams(location.search);
+  if (q.get("error")) {
+    document.getElementById("failed-reason").textContent =
+      q.get("error") === "access_denied" ? "許可がキャンセルされました。" : "エラー：" + q.get("error");
+    show("failed");
+  } else if (q.get("code")) {
+    let saved = null;
+    try { saved = sessionStorage.getItem("oauth_state"); } catch (e) {}
+    if (saved && q.get("state") !== saved) {
+      document.getElementById("failed-reason").textContent = "安全確認に失敗しました。最初からやり直してください。";
+      show("failed");
+    } else {
+      document.getElementById("code").value = q.get("code");
+      show("done");
+      // アドレスバーからコードを消しておく（画面共有などで見られないように）
+      history.replaceState(null, "", location.pathname);
+    }
+  }
+</script>
+</body>
+</html>
